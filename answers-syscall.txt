@@ -1,0 +1,6 @@
+usertrap
+SYS_exec 7
+sstatus: 0x22  SSTATUS_SPP (1L << 8)  // Previous mode, 1=Supervisor, 0=User so in user mode
+    80002052:	00002683          	lw	a3,0(zero) # 0 <_entry-0x80000000> a3
+0 was not mapped in the kernel address space   scause 0x000000000000000d  13 Load page fault
+name: initcode      pid: 1
