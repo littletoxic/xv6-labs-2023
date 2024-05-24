@@ -713,3 +713,28 @@ procdump(void)
     printf("\n");
   }
 }
+
+#ifdef LAB_PGTBL
+int
+pgaccess(uint64 va, int len, uint64 returnaddr) {
+  pte_t *pte;
+  unsigned int result = 0;
+  int i = 0;
+  struct proc *p = myproc();
+
+  for (i = 0; i < len; i++) {
+    pte = walk(p->pagetable, va + i * PGSIZE, 0);
+    if (*pte == 0) {
+      return -1;
+    }
+    if ((*pte & PTE_A) != 0) {
+      result |= 1 << i;
+      *pte &= ~PTE_A;
+    }
+  }
+  if(copyout(p->pagetable, returnaddr, (char *)&result, sizeof(result)) < 0)
+    return -1;
+
+  return 0;
+}
+#endif

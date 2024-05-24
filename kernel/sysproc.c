@@ -71,11 +71,20 @@ sys_sleep(void)
 
 
 #ifdef LAB_PGTBL
-int
+uint64
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
-  return 0;
+  uint64 va;
+  int pagecount;
+  uint64 resultaddr;
+
+  argint(1, &pagecount);
+  if (pagecount > ACCESS_CHECK_MAX)
+    return -1;
+  argaddr(0, &va);
+  argaddr(2, &resultaddr);
+
+  return pgaccess(va, pagecount, resultaddr);
 }
 #endif
 

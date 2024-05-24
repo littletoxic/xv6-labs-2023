@@ -73,6 +73,8 @@
 #ifdef LAB_PGTBL
 #define USYSCALL (TRAPFRAME - PGSIZE)
 
+#define ACCESS_CHECK_MAX (sizeof(unsigned int) * 8)
+
 struct usyscall {
   int pid;  // Process ID
 };
