@@ -15,6 +15,8 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+char sharerefcnt[(PHYSTOP - KERNBASE) / PGSIZE];
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -192,7 +194,12 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not a leaf");
     if(do_free){
       uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
+      uint64 refindex = PA2INDEX(pa);
+      if ((*pte & PTE_SHARE) == 0) {
+        kfree((void*)pa);
+      } else if (--sharerefcnt[refindex] == 0) {
+        kfree((void*)pa);
+      }
     }
     *pte = 0;
   }
@@ -313,9 +320,8 @@ int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
-  uint64 pa, i;
+  uint64 pa, i, refindex;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -323,12 +329,20 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
+    refindex = PA2INDEX(pa);
+    if ((*pte & PTE_SHARE) == 0) { // unshared
+      *pte |= PTE_SHARE;
+      sharerefcnt[refindex] = 2;
+      if ((*pte & PTE_W) != 0) {
+        *pte ^= PTE_W;
+        *pte |= PTE_COW;
+      }
+    } else { // shared
+      sharerefcnt[refindex]++;
+    }
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+      sharerefcnt[refindex]--;
       goto err;
     }
   }
@@ -366,10 +380,22 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
+
     if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+       ((*pte & PTE_W) == 0 && (*pte & PTE_COW) == 0))
       return -1;
     pa0 = PTE2PA(*pte);
+    if ((*pte & PTE_COW) != 0) {
+      char *mem;
+      if((mem = kalloc()) == 0)
+        return -1;
+      memmove(mem, (char*)pa0, PGSIZE);
+      *pte = (PA2PTE(mem) | PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW & ~PTE_SHARE;
+      if (--sharerefcnt[PA2INDEX(pa0)] == 0)
+        kfree((void *)pa0); 
+      pa0 = (uint64) mem;
+    }
+    
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
