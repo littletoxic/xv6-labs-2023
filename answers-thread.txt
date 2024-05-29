@@ -1,0 +1,12 @@
+thread1 thread2
+insert(key, value, &table[i], table[i]);
+        insert(key, value, &table[i], table[i]);
+
+当线程1没有将table[i]改为新插入的entry前线程2进入insert，导致线程1的插入被线程2覆盖
+
+即
+table[i]->entry
+table[i]->entry<-thread1_new_entry
+table[i]->thread1_new_entry->entry
+table[i]->thread1_new_entry->entry<-thread2_new_entry
+table[i]->thread2_new_entry->entry

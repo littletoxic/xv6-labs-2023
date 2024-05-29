@@ -30,7 +30,7 @@ swtch:
         ld s3, 40(a1)
         ld s4, 48(a1)
         ld s5, 56(a1)
-        ld s6, 64(a1)
+        ld s6, 64(a1)   
         ld s7, 72(a1)
         ld s8, 80(a1)
         ld s9, 88(a1)
