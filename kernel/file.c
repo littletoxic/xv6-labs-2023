@@ -12,6 +12,7 @@
 #include "file.h"
 #include "stat.h"
 #include "proc.h"
+#include "fcntl.h"
 
 struct devsw devsw[NDEV];
 struct {
@@ -180,3 +181,96 @@ filewrite(struct file *f, uint64 addr, int n)
   return ret;
 }
 
+void
+mmapfile(pte_t *pte, uint64 va)
+{
+  int i, perm;
+  char *mem;
+  struct file *f;
+  struct vma *vma = 0;
+  struct proc *p = myproc();
+
+  for (i = 0; i < 16; i++) {
+    if (!p->vmas[i].valid)
+      continue;
+
+    if (va >= p->vmas[i].va && va < p->vmas[i].end) {
+      vma = &p->vmas[i];
+      break;
+    }
+  }
+
+  if (vma == 0) {
+    panic("handlemmap: pte flag exist but no map");
+  }
+
+  if ((mem = kalloc()) == 0)
+    panic("handlemmap: kalloc");
+
+  f = vma->f;
+  // assume that prot is PROT_READ or PROT_WRITE or both
+  perm = 0;
+  if (f->readable != 0 && vma->prot & PROT_READ)
+    perm |= PTE_R;
+  if (vma->prot & PROT_WRITE && (vma->flags & MAP_PRIVATE || f->writable != 0))
+    perm |= PTE_W;
+  *pte = PA2PTE(mem) | perm | PTE_U | PTE_V;
+
+  memset(mem, 0, PGSIZE);
+  ilock(f->ip);
+  // assume in bound
+  readi(f->ip, 0, (uint64)mem, vma->off + va - vma->va, PGSIZE);
+  iunlock(f->ip);
+}
+
+void munmap(struct vma *vma, uint64 len, uint64 addr, int full, int start) {
+  int i = 0;
+  pte_t *pte;
+  struct proc *p = myproc();
+
+  // write back
+  if (vma->f->writable && vma->flags & 0x01 && vma->prot & 0x02) {
+    int len0 = len, r;
+    // filewrite use f->off so cannot replace
+    if (len0 > (int)(vma->f->ip->size - addr + vma->va - vma->off))
+      len0 = (int)(vma->f->ip->size - addr + vma->va - vma->off);
+    struct file *f = vma->f;
+    int max = ((MAXOPBLOCKS-1-1-2) / 2) * BSIZE;
+    while(i < len0){
+      int len1 = len0 - i;
+      if(len1 > max)
+        len1 = max;
+
+      begin_op();
+      ilock(f->ip);
+      r = writei(f->ip, 1, addr + i, vma->off + addr - vma->va + i, len1);
+
+      iunlock(f->ip);
+      end_op();
+
+      if(r != len1) {
+        panic("munmap: write back");
+      }
+      i += r;
+    }
+  }
+
+
+  if (full) {
+    vma->valid = 0;
+    fileclose(vma->f);
+  } else if (start) {
+    vma->va += len;
+    vma->off += len;
+  } else {
+    vma->end = addr;
+  }
+
+  for (i = 0; i < len / 4096; i++) {
+    if((pte = walk(p->pagetable, addr + i * PGSIZE, 0)) == 0)
+      panic("munmap");
+    if (*pte & PTE_V)
+      kfree((void *)PTE2PA(*pte));
+    *pte = 0;
+  }
+}

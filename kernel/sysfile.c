@@ -503,3 +503,101 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void)
+{
+  // assume that addr will always be zero
+  // assume offset is zero
+  // assume len is a multiple of the page size
+  struct file *f;
+  size_t len;
+  int prot, flags, i;
+  uint64 addr;
+  struct vma *vma;
+  pte_t *pte;
+  struct proc *p = myproc();
+
+  if(argfd(4, 0, &f) < 0)
+    return -1;
+  argaddr(1, &len);
+  argint(2, &prot);
+  argint(3, &flags);
+
+  // accessiblity control
+  if (flags & MAP_SHARED) {
+    if (prot & PROT_READ && !f->readable) {
+      return -1;
+    }
+    if (prot & PROT_WRITE && !f->writable) {
+      return -1;
+    }
+  }
+
+  if ((addr = findfree(len)) < 0)
+    return -1;
+
+  for (i = 0; i < 16; i++) {
+    if (!p->vmas[i].valid)
+      break;
+
+    if (i == 15) {
+      return -1;
+    }
+  }
+
+  vma = &p->vmas[i];
+
+  // unhandled len > f.len
+  vma->f = f;
+  vma->flags = flags;
+  vma->end = addr + len;
+  vma->prot = prot;
+  vma->va = addr;
+  vma->valid = 1;
+  vma->off = 0;
+
+  filedup(f);
+
+  for (i = 0; i * PGSIZE < len; i++) {
+    pte = walk(p->pagetable, addr + i * PGSIZE, 0);
+    *pte = PTE_MMAP;
+  }
+  return addr;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr, len;
+  int i, start, full = 0;
+  struct vma *vma = 0;
+  struct proc *p = myproc();
+
+  argaddr(0, &addr);
+  argaddr(1, &len);
+
+  for (i = 0; i < 16; i++) {
+    if (!p->vmas[i].valid)
+      continue;
+    if (addr == p->vmas[i].va && addr + len <= p->vmas[i].end) {
+      start = 1;
+      if (addr + len == p->vmas[i].end)
+        full = 1;
+      vma = &p->vmas[i];
+      break;
+    }
+    if (addr > p->vmas[i].va && addr + len == p->vmas[i].end) {
+      start = 0;
+      vma = &p->vmas[i];
+      break;
+    }
+  }
+
+  if (vma == 0)
+    return -1;
+
+  munmap(vma, len, addr, full, start);
+
+  return 0;
+}

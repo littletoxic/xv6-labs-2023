@@ -6,6 +6,8 @@
 #include "proc.h"
 #include "defs.h"
 
+struct file;
+
 struct spinlock tickslock;
 uint ticks;
 
@@ -27,6 +29,42 @@ void
 trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
+}
+
+void
+handlemmap(void)
+{
+  uint64 va;
+  //struct inode *ip;
+  pagetable_t pagetable;
+  pte_t *pte;
+  struct proc *p = myproc();
+
+  pagetable = p->pagetable;
+  va = r_stval();
+
+  if (va >= MAXVA) {
+    goto err;
+  }
+
+  if ((pte = walk(pagetable, va, 0)) == 0) {
+    goto err;
+  }
+
+  // invalid access
+  if (*pte & PTE_V || !(*pte & PTE_MMAP)) {
+    goto err;
+  }
+
+  mmapfile(pte, va);
+  return;
+
+
+err:
+  printf("0usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+  printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+  setkilled(p);
+  return;
 }
 
 //
@@ -67,6 +105,8 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == 0xd || r_scause() == 0xf) {
+    handlemmap();
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

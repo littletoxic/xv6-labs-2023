@@ -279,7 +279,9 @@ growproc(int n)
 int
 fork(void)
 {
+  uint64 addr;
   int i, pid;
+  pte_t *pte;
   struct proc *np;
   struct proc *p = myproc();
 
@@ -295,6 +297,30 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  // vmas
+  for(int i = 0; i < 16; i++) {
+    if (!p->vmas[i].valid)
+      continue;
+
+    np->vmas[i] = p->vmas[i];
+    
+    for (addr = np->vmas[i].va; addr < np->vmas[i].end; addr += PGSIZE) {
+      if((pte = walk(np->pagetable, addr, 1)) == 0) {
+        acquire(&np->lock);
+        freeproc(np);
+        release(&np->lock);
+        return -1;
+      }
+      *pte = PTE_MMAP;
+    }
+  }
+  for(int i = 0; i < 16; i++) {
+    if (!np->vmas[i].valid)
+      continue;
+
+    filedup(np->vmas[i].f);
+  }
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -346,10 +372,19 @@ reparent(struct proc *p)
 void
 exit(int status)
 {
+  struct vma *vma;
   struct proc *p = myproc();
 
   if(p == initproc)
     panic("init exiting");
+
+  for (int i = 0; i < 16; i++) {
+    if(!p->vmas[i].valid)
+      continue;
+
+    vma = &p->vmas[i];
+    munmap(vma, vma->end - vma->va, vma->va, 1, 1);
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
@@ -685,4 +720,32 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+uint64
+findfree(int len)
+{
+  pagetable_t pagetable;
+  uint64 addr, sz;
+  int count;
+  pte_t *pte;
+  struct proc *p = myproc();
+
+  pagetable = p->pagetable;
+  addr = PGROUNDDOWN(MAXVA - (PGSIZE * 15));
+  count = 0; sz = p->sz;
+  while(addr > sz) {
+    addr -= PGSIZE;
+    if((pte = walk(pagetable, addr, 1)) == 0)
+      return -1;
+    if ((*pte & PTE_V) || (*pte & PTE_MMAP)) {
+      count = 0;
+      continue;
+    }
+    if (++count == len / PGSIZE) {
+      return addr;
+    }
+  }
+
+  return -1;
 }
